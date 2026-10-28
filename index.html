@@ -6,10 +6,10 @@
 <title>DBML Sorter</title>
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #6b7280; --border: #d9dde4;
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #6b7280; --border: #d9dde4; --diff: rgba(245, 200, 10, 0.1);
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #14171c; --panel: #1c2027; --text: #e6e8ec; --muted: #9aa1ad; --border: #2e3440; }
+    :root { --bg: #14171c; --panel: #1c2027; --text: #e6e8ec; --muted: #9aa1ad; --border: #2e3440; --diff: rgba(245, 158, 11, 0.2); }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
@@ -19,8 +19,14 @@
   main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 16px; min-height: 0; }
   .pane { display: flex; flex-direction: column; min-height: 0; }
   .pane-head { display: flex; justify-content: space-between; align-items: center; height: 30px; margin-bottom: 6px; color: var(--muted); }
-  textarea { flex: 1; width: 100%; resize: none; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); font: 12.5px/1.5 ui-monospace, Consolas, monospace; tab-size: 2; white-space: pre; }
-  @media (max-width: 760px) { main { grid-template-columns: 1fr; } textarea { min-height: 40vh; } }
+  .editor { flex: 1; position: relative; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); overflow: hidden; }
+  .editor > * { position: absolute; inset: 0; margin: 0; padding: 10px; font: 12.5px/1.5 ui-monospace, Consolas, monospace; tab-size: 2; white-space: pre; }
+  textarea { width: 100%; height: 100%; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); }
+  .marks { overflow: hidden; color: transparent; pointer-events: none; }
+  .marks > div { display: inline-block; min-width: 100%; }
+  .marks span { display: block; }
+  .marks .diff { background: var(--diff); }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } .editor { min-height: 40vh; } }
 </style>
 </head>
 <body>
@@ -28,11 +34,17 @@
 <main>
   <div class="pane">
     <div class="pane-head">Input</div>
-    <textarea id="input" spellcheck="false" placeholder="Paste dbdiagram.io DSL here…"></textarea>
+    <div class="editor">
+      <div class="marks" id="input-marks"><div></div></div>
+      <textarea id="input" spellcheck="false" wrap="off" placeholder="Paste dbdiagram.io DSL here…"></textarea>
+    </div>
   </div>
   <div class="pane">
     <div class="pane-head">Sorted <button id="copy">Copy</button></div>
-    <textarea id="output" spellcheck="false" readonly></textarea>
+    <div class="editor">
+      <div class="marks" id="output-marks"><div></div></div>
+      <textarea id="output" spellcheck="false" wrap="off" readonly></textarea>
+    </div>
   </div>
 </main>
 <script src="sorter.js"></script>
@@ -42,19 +54,44 @@
   $('input').addEventListener('input', (e) => {
     if (e.inputType === 'insertFromPaste') $('input').value = $('input').value.trim();
     $('output').value = DbmlSorter.sortDbml($('input').value);
+    markDiffs();
   });
 
-  // Proportional scroll sync; `syncing` ignores the scroll event our own update triggers.
+  const escape = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+  // Marks lines that differ from the other side at the same line number.
+  function markDiffs() {
+    const a = $('input').value.split('\n');
+    const b = $('output').value.split('\n');
+    const render = (lines, other) => lines
+      .map((line, i) => `<span class="${line === other[i] ? '' : 'diff'}">${escape(line) || ' '}</span>`)
+      .join('');
+    $('input-marks').firstChild.innerHTML = render(a, b);
+    $('output-marks').firstChild.innerHTML = render(b, a);
+    for (const id of ['input', 'output']) followScroll(id);
+  }
+
+  // Keeps the marks layer aligned with its textarea, leaving room for the textarea's scrollbars.
+  function followScroll(id) {
+    const ta = $(id), marks = $(`${id}-marks`);
+    marks.style.right = `${ta.offsetWidth - ta.clientWidth}px`;
+    marks.style.bottom = `${ta.offsetHeight - ta.clientHeight}px`;
+    marks.scrollTop = ta.scrollTop;
+    marks.scrollLeft = ta.scrollLeft;
+  }
+
+  // Same-line scroll sync; `syncing` ignores the scroll event our own update triggers.
   let syncing = null;
   for (const [from, to] of [['input', 'output'], ['output', 'input']]) {
     $(from).addEventListener('scroll', () => {
+      followScroll(from);
       if (syncing === to) { syncing = null; return; }
       const a = $(from), b = $(to);
-      const ratio = a.scrollTop / Math.max(1, a.scrollHeight - a.clientHeight);
-      const top = Math.round(ratio * (b.scrollHeight - b.clientHeight));
-      if (b.scrollTop === top) return;
-      syncing = from;
-      b.scrollTop = top;
+      const before = [b.scrollTop, b.scrollLeft];
+      b.scrollTop = a.scrollTop;
+      b.scrollLeft = a.scrollLeft;
+      // Only expect an echo event if b actually moved (it may already be at its limit).
+      if (b.scrollTop !== before[0] || b.scrollLeft !== before[1]) syncing = from;
     });
   }
 

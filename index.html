@@ -44,6 +44,20 @@
     $('output').value = DbmlSorter.sortDbml($('input').value);
   });
 
+  // Proportional scroll sync; `syncing` ignores the scroll event our own update triggers.
+  let syncing = null;
+  for (const [from, to] of [['input', 'output'], ['output', 'input']]) {
+    $(from).addEventListener('scroll', () => {
+      if (syncing === to) { syncing = null; return; }
+      const a = $(from), b = $(to);
+      const ratio = a.scrollTop / Math.max(1, a.scrollHeight - a.clientHeight);
+      const top = Math.round(ratio * (b.scrollHeight - b.clientHeight));
+      if (b.scrollTop === top) return;
+      syncing = from;
+      b.scrollTop = top;
+    });
+  }
+
   $('copy').onclick = async () => {
     await navigator.clipboard.writeText($('output').value);
     $('copy').textContent = 'Copied';
